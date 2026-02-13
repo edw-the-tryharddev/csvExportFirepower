@@ -157,19 +157,12 @@ class FMCPolicyExtractor:
         # Cache for object details to avoid repeated API calls
         self.object_cache = {}
         
-    def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
+    def _make_request(self, endpoint: str, params: Optional[Dict] = None, retry: bool = True) -> Optional[Dict]:
         """
-        Make authenticated API request to FMC
-        
-        Args:
-            endpoint: API endpoint path
-            params: Query parameters
-            
-        Returns:
-            Response JSON or None if error
+        Make authenticated API request to FMC with automatic token refresh
         """
         url = f"{self.base_url}/domain/{self.auth.domain_uuid}/{endpoint}"
-        
+
         try:
             response = requests.get(
                 url,
@@ -178,20 +171,31 @@ class FMCPolicyExtractor:
                 verify=False,
                 timeout=30
             )
-            
+
             if response.status_code == 200:
                 return response.json()
+
+            elif response.status_code == 401 and retry:
+                print("[!] Token expired. Re-authenticating...")
+                
+                if self.auth.authenticate():
+                    print("[✓] Token refreshed. Retrying request...")
+                    return self._make_request(endpoint, params, retry=False)
+                else:
+                    print("[✗] Re-authentication failed.")
+                    return None
+
             elif response.status_code == 429:
-                # Rate limiting - wait and retry
-                print(f"[!] Rate limited, waiting 60 seconds...")
+                print("[!] Rate limited, waiting 60 seconds...")
                 time.sleep(60)
-                return self._make_request(endpoint, params)
+                return self._make_request(endpoint, params, retry)
+
             else:
                 print(f"[✗] API request failed: {response.status_code}")
                 print(f"[✗] URL: {url}")
                 print(f"[✗] Response: {response.text}")
                 return None
-                
+
         except requests.exceptions.RequestException as e:
             print(f"[✗] Request error: {e}")
             return None
